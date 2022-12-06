@@ -647,7 +647,7 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
     #[pyfn(m)]
     #[pyo3(name = "find_nMer_distributions")]
-    pub fn find_nMer_distributions<'py>(py: Python<'py>, contig_file: &str) -> (&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>, Vec<String>, Vec<usize>) {
+    pub fn find_nMer_distributions<'py>(py: Python<'py>, contig_file: &str) -> (&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>,&'py PyArray1<f32>, Vec<String>) {
         //rayon::ThreadPoolBuilder::new().num_threads(32).build_global().unwrap();
         //rayon::ThreadPoolBuilder::new().num_threads(64).build_global().unwrap();
         let file_info = fs::metadata(contig_file).unwrap();
@@ -738,6 +738,13 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
                 .collect::<Vec<_>>();
                 //dbg!("here6");
 
+        let pretens_ry= contigs
+                        .par_iter()
+                         .enumerate()
+                      .filter(|(a,b)| contig_lens[*a] >= 0  )
+                        .map(|(a,&ctg)| find_rymers(ctg))
+                     .collect::<Vec<_>>();
+
         let pre_5mers = pre_tens
                                 .par_iter()
                                 .flat_map_iter(|i| i.0)
@@ -768,6 +775,28 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
                                 .par_iter()
                                 .flat_map_iter(|i| i.5)
                                 .collect::<Vec<_>>();
+        let pre_10mers = pretens_ry
+                                .par_iter()
+                                .flat_map_iter(|i| i.0)
+                                .collect::<Vec<_>>();
+
+        let pre_9mers = pretens_ry
+                                .par_iter()
+                                .flat_map_iter(|i| i.1)
+                                .collect::<Vec<_>>();
+
+        let pre_8mers = pretens_ry
+                                .par_iter()
+                                .flat_map_iter(|i| i.2)
+                                .collect::<Vec<_>>();
+        let pre_7mers = pretens_ry
+                                .par_iter()
+                                .flat_map_iter(|i| i.3)
+                                .collect::<Vec<_>>();
+        let pre_6mers = pretens_ry
+                                .par_iter()
+                                .flat_map_iter(|i| i.4)
+                                .collect::<Vec<_>>();
 
         let contig_lens = contig_lens
                                 .par_iter()
@@ -782,8 +811,12 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
             pre_3mers.into_pyarray(py),
             pre_2mers.into_pyarray(py),
             pre_1mers.into_pyarray(py),
-            contig_names,
-            contig_lens
+            pre_10mers.into_pyarray(py),
+            pre_9mers.into_pyarray(py),
+            pre_8mers.into_pyarray(py),
+            pre_7mers.into_pyarray(py),
+            pre_6mers.into_pyarray(py),
+            contig_names
         )
     }
     #[pyfn(m)]
