@@ -28,6 +28,7 @@ maturin develop --release -- -C target-cpu=native
 Put in a (optionally gzipped) fasta. indices are corresponding (contig_names[i] is name for and  fivemers[i] is fivemer counts)
 ```
 import kmer_counter
+import numpy as np
 
 tmp  = kmer_counter.find_nMer_distributions("/pscratch/sd/r/richardl/skin/contigs.fna.gz")
 
