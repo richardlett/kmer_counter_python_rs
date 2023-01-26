@@ -145,6 +145,34 @@ const fn kmer_to_16_bit_ray_ry<const N: usize>( mer:  & [u8]) -> Option<u32> {
 }
 
 
+fn subm_rymers(bin_rep: u32, N: usize) -> (u32, u32) {
+    let mask = ((1u32<<(N-1))-1);
+    return ((mask & bin_rep) ,  (((mask << 1) & bin_rep) >> 1));
+}
+
+fn quotient_ry_mers<const A: usize, const B: usize, const C: usize, const D: usize >(mut a:[f32;A],b:[f32;B] , a_tbl: [u32;C] , b_tbl: [u32;D], log2c: usize ) -> [f32;A] {
+    let mut aleady_quotiented = [false; A];
+
+    for kmer in 0..C {
+        let canon_idx = a_tbl[kmer];
+
+        if aleady_quotiented[canon_idx as usize] { continue; }
+
+        aleady_quotiented[canon_idx as usize] = true;
+
+        let (submer_1, submer_2) = subm_rymers(kmer as u32,log2c);
+
+        let (count1, count2) = (b[b_tbl[submer_1 as usize] as usize], b[b_tbl[submer_2 as usize] as usize]);
+
+        let denom = count1*count2;
+
+        if denom > 0.000001 {
+            a[canon_idx as usize]/= denom
+        }
+    }
+    return a;
+}
+
 fn find_rymers(contig: &str) -> ([f32; 528],[f32; 256], [f32; 136],  [f32; 64],  [f32; 36], usize) {
     let mut sixmer_counts = [0u32; 36];
     let mut sevenmer_counts = [0u32; 64];
@@ -211,7 +239,14 @@ fn find_rymers(contig: &str) -> ([f32; 528],[f32; 256], [f32; 136],  [f32; 64], 
    let out_8mer  = norm_vector(eightmer_counts);
    let out_7mer = norm_vector(sevenmer_counts);
    let out_6mer = norm_vector(sixmer_counts);
-   (out_10mer,out_9mer,out_8mer,out_7mer,out_6mer, invalid_count)
+
+   let q10mer = norm_vector_f(quotient_ry_mers(out_10mer, out_9mer, RY10TBL, RY9TBL,10));
+   let q9mer = norm_vector_f(quotient_ry_mers(out_9mer, out_8mer, RY9TBL, RY8TBL,9));
+
+   let q8mer = norm_vector_f(quotient_ry_mers(out_8mer, out_7mer, RY8TBL, RY7TBL,8));
+   let q7mer = norm_vector_f(quotient_ry_mers(out_7mer, out_6mer, RY7TBL, RY6TBL,7));
+
+   (q10mer,q9mer,q8mer,q7mer,out_6mer, invalid_count)
 
 
 } 
@@ -396,6 +431,25 @@ fn norm_vector<const N: usize>(in_vec: [u32;N]) -> [f32; N] {
 
     result
 }
+
+
+fn norm_vector_f<const N: usize>(in_vec: [f32;N]) -> [f32; N] {
+    let sum = in_vec.iter()
+                    .map(|&x| (x as f64)*(x as f64))
+                    .sum::<f64>()
+                    .sqrt();
+    
+    let mut result =  [0.0; N];
+
+    if sum > 0. {
+        for i in 0..N {
+            result[i] = ((in_vec[i] as f64)/(sum as f64)) as f32;
+        }
+    }
+
+    result
+}
+
 
 // /// Given a contig of DNA bases, calculates L2 normed
 // /// "Distribution" over contigs 4mer count, where 4mers
@@ -677,7 +731,7 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
 
         // split on new fasta name delimitor, skip first trivial
-        let lines = string_slice_rep.par_split('>').filter(|x| x.len() >= 1750).collect::<Vec<_>>();
+        let lines = string_slice_rep.par_split('>').filter(|x| x.len() >= 1000).collect::<Vec<_>>();
         //dbg!("here2");]
         
 
