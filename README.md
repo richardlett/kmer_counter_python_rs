@@ -60,4 +60,4 @@ at line 861 in lib.rs, change
 
 and change the function signature at line 704 to `usize` instead of `f32` for whatever one you replace I beleive.
 
-
+Edit l4n1mers are bugged. I dont use those anymore
