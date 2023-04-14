@@ -3,9 +3,14 @@ use std::fs;
 use std::os::unix::fs::FileExt;
 use rand::{Rng, thread_rng};
 
+use rand::prelude::*;
+use rand::distributions::WeightedIndex;
+
+
+
 //Rayon is Rust equivalent of openMP
 use rayon::prelude::ParallelString;
-use rayon::prelude::ParallelSliceMut;
+//use rayon::prelude::ParallelSliceMut;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
@@ -171,6 +176,83 @@ fn quotient_ry_mers<const A: usize, const B: usize, const C: usize, const D: usi
         }
     }
     return a;
+}
+
+
+fn find_rymers_bytes(contig: &[u8]) -> ([f32; 528],[f32; 256], [f32; 136],  [f32; 64],  [f32; 36], usize) {
+    let mut sixmer_counts = [0u32; 36];
+    let mut sevenmer_counts = [0u32; 64];
+    let mut eightmer_counts = [0u32; 136];
+    let mut ninemer_counts = [0u32; 256];
+    let mut tenmer_counts = [0u32; 528];
+
+    let mut invalid_count = 0;
+
+    let mut fmer = [0u8;10];
+
+    for i in 0..9 {
+        fmer[i+1] = contig[i];
+    }
+
+   for b in  contig[9..].iter() {
+       for i in 0..9 {
+           fmer[i] = fmer[i+1];
+       }
+       fmer[9] = *b;
+       match(kmer_to_16_bit_ray_ry::<10>(&fmer)) {
+            Some(f) => {
+                let class = RY10TBL[f as usize];
+                tenmer_counts[class as usize] += 1;
+            },
+            None => {
+                invalid_count += 1;
+            },
+       }
+       match(kmer_to_16_bit_ray_ry::<9>(&fmer)) {
+            Some(f) => {
+                let class = RY9TBL[f as usize];
+                ninemer_counts[class as usize] += 1;
+            },
+            None => (),
+        }
+        match(kmer_to_16_bit_ray_ry::<8>(&fmer)) {
+            Some(f) => {
+                let class = RY8TBL[f as usize];
+                eightmer_counts[class as usize] += 1;
+            },
+            None => (),
+        }
+        match(kmer_to_16_bit_ray_ry::<7>(&fmer)) {
+            Some(f) => {
+                let class = RY7TBL[f as usize];
+                sevenmer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+        match(kmer_to_16_bit_ray_ry::<6>(&fmer)) {
+            Some(f) => {
+                let class = RY6TBL[f as usize];
+                sixmer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+   }
+
+
+
+   let out_10mer  = norm_vector(tenmer_counts);
+   let out_9mer  = norm_vector(ninemer_counts);
+   let out_8mer  = norm_vector(eightmer_counts);
+   let out_7mer = norm_vector(sevenmer_counts);
+   let out_6mer = norm_vector(sixmer_counts);
+
+   let q10mer = norm_vector_f(quotient_ry_mers(out_10mer, out_9mer, RY10TBL, RY9TBL,10));
+   let q9mer = norm_vector_f(quotient_ry_mers(out_9mer, out_8mer, RY9TBL, RY8TBL,9));
+
+   let q8mer = norm_vector_f(quotient_ry_mers(out_8mer, out_7mer, RY8TBL, RY7TBL,8));
+   let q7mer = norm_vector_f(quotient_ry_mers(out_7mer, out_6mer, RY7TBL, RY6TBL,7));
+
+   (q10mer,q9mer,q8mer,q7mer,out_6mer, invalid_count)
 }
 
 fn find_rymers(contig: &str) -> ([f32; 528],[f32; 256], [f32; 136],  [f32; 64],  [f32; 36], usize) {
@@ -451,6 +533,159 @@ fn norm_vector_f<const N: usize>(in_vec: [f32;N]) -> [f32; N] {
 }
 
 
+
+fn contig_2_nmer_distrs_bytes(contig: &[u8]) -> ([f32; 512], [f32; 136], [f32; 136], [f32; 32], [f32; 10], [f32; 2], usize) {
+    let mut onemer_counts = [0u32; 2];
+    let mut twomer_counts = [0u32; 10];
+    let mut threemer_counts = [0u32; 32];
+    let mut fourmer_counts = [0u32; 136];
+    let mut fivemer_counts = [0u32; 512];
+
+    let mut invalid_count = 0;
+
+    let mut fmer = [
+        0,
+        contig[0],
+        contig[1],
+        contig[2],
+        contig[3],
+    ];
+
+    for b in contig[4..].iter() {
+        fmer[0] = fmer[1];
+        fmer[1] = fmer[2];
+        fmer[2] = fmer[3];
+        fmer[3] = fmer[4];
+        fmer[4] = *b;
+    
+
+        match kmer_to_16_bit_ray::<5>(&fmer) {
+            Some(f) => {
+                let class = FIVEMERTABLE[f as usize];
+                fivemer_counts[class as usize] += 1;
+            }
+            None => {
+                invalid_count += 1;
+            },
+        }
+    
+        match kmer_to_16_bit_ray::<4>(&fmer[..4]) {
+            Some(f) => {
+                let class = FOURMERTABLE[f as usize];
+                fourmer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+    
+        match kmer_to_16_bit_ray::<3>(&fmer[..3]) {
+            Some(f) => {
+                let class = THREEMERTABLE[f as usize];
+                threemer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+
+        match kmer_to_16_bit_ray::<2>(&fmer[..2]) {
+            Some(f) => {
+                let class = TWOMERTABLE[f as usize];
+                twomer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+
+        match kmer_to_16_bit_ray::<1>(&fmer[..1]) {
+            Some(f) => {
+                let class = ONEMERTABLE[f as usize];
+                onemer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+
+    }
+
+    
+    match kmer_to_16_bit_ray::<4>(&fmer[1..5]) {
+        Some(f) => {
+            let class = FOURMERTABLE[f as usize];
+            fourmer_counts[class as usize] += 1;
+        }
+        None => (),
+    }
+
+    for i in 1..3 {
+        match kmer_to_16_bit_ray::<3>(&fmer[i..3+i]) {
+            Some(f) => {
+                let class = THREEMERTABLE[f as usize];
+                threemer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+    }
+    for i in 1..4 {
+        match kmer_to_16_bit_ray::<2>(&fmer[i..2+i]) {
+            Some(f) => {
+                let class = TWOMERTABLE[f as usize];
+                twomer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+    }
+    for i in 1..5 {
+        match kmer_to_16_bit_ray::<1>(&fmer[i..1+i]) {
+            Some(f) => {
+                let class = ONEMERTABLE[f as usize];
+                onemer_counts[class as usize] += 1;
+            }
+            None => (),
+        }
+    }
+
+
+
+    let out_5mer  = norm_vector(fivemer_counts);
+    let out_4mer  = norm_vector(fourmer_counts);
+    let out_3mer  = norm_vector(threemer_counts);
+    let out_2mer = norm_vector(twomer_counts);
+    let out_1mer = norm_vector(onemer_counts);
+
+    let mut fourmer_multipliers =  [0f64;136];
+    for i in 0..136 {
+        let mut denom: f64 = 1.0;
+        for _ in 0..MULTIPLIERS[i].0 {
+            denom *= out_1mer[0] as f64;
+           // assert!(onemer_counts[0]  != 0);
+        }
+        for _ in 0..MULTIPLIERS[i].1 {
+            denom *= out_1mer[1] as f64;
+          //  assert!(onemer_counts[1]  != 0);
+
+        }
+        fourmer_multipliers[i] = denom as f64;
+    }
+
+    let mut out_l4n1 = [0.0f32; 136];
+
+    for i in 0..136 {
+        let denom = fourmer_multipliers[i];
+        // if denom == 0 and fourmer_counts[i] != 0 {
+        //     panic!();
+        // }
+        out_l4n1[i] = if denom > 0.0 {
+            ((out_4mer[i] as f64)/denom) as f32
+        } else {
+            if out_4mer[i]  > 0.0 {
+                dbg!(&fourmer_counts[i]);
+                dbg!(&fourmer_multipliers[i]);
+                panic!();
+            }
+            0.0
+        };
+    }
+
+    (out_5mer, out_4mer, out_4mer, out_3mer, out_2mer, out_1mer, invalid_count)
+}
+
+
 // /// Given a contig of DNA bases, calculates L2 normed
 // /// "Distribution" over contigs 4mer count, where 4mers
 // /// are quotiented by reverse complement.
@@ -568,40 +803,43 @@ fn contig_2_nmer_distrs(contig: &str) -> ([f32; 512], [f32; 136], [f32; 136], [f
     let out_2mer = norm_vector(twomer_counts);
     let out_1mer = norm_vector(onemer_counts);
 
-    let mut fourmer_multipliers =  [0u64;136];
+
+    let mut fourmer_multipliers =  [0f64;136];
     for i in 0..136 {
-        let mut denom: u64 = 1;
+        let mut denom: f64 = 1.0;
         for _ in 0..MULTIPLIERS[i].0 {
-            denom *= onemer_counts[0] as u64;
+            denom *= out_1mer[0] as f64;
+           // assert!(onemer_counts[0]  != 0);
         }
         for _ in 0..MULTIPLIERS[i].1 {
-            denom *= onemer_counts[1] as u64;
-        }
-        fourmer_multipliers[i] = denom as u64;
-    }
+            denom *= out_1mer[1] as f64;
+          //  assert!(onemer_counts[1]  != 0);
 
-    let mut sum: f64 = 0.0;
-    for i in 0..136 {
-        let denom = fourmer_multipliers[i];
-        sum += if denom > 0 {
-            (fourmer_counts[i] as f64)/(denom as f64)
-        } else {
-            0.0
-        };
+        }
+        fourmer_multipliers[i] = denom as f64;
     }
 
     let mut out_l4n1 = [0.0f32; 136];
 
     for i in 0..136 {
         let denom = fourmer_multipliers[i];
-        out_l4n1[i] = if denom != 0 && sum >= 0.00000001 {
-            (((fourmer_counts[i] as f64)/(denom as f64))/sum) as f32
+        // if denom == 0 and fourmer_counts[i] != 0 {
+        //     panic!();
+        // }
+        out_l4n1[i] = if denom > 0.0 {
+            ((out_4mer[i] as f64)/denom) as f32
         } else {
+            if out_4mer[i]  > 0.0 {
+                dbg!(&fourmer_counts[i]);
+                dbg!(&fourmer_multipliers[i]);
+                panic!();
+            }
             0.0
         };
     }
 
-    (out_5mer, out_l4n1, out_4mer, out_3mer, out_2mer, out_1mer, invalid_count)
+
+    (out_5mer, out_4mer, out_4mer, out_3mer, out_2mer, out_1mer, invalid_count)
 }
 
 use numpy::IntoPyArray;
@@ -618,8 +856,325 @@ use std::path::Path;
 use numpy::array::PyArray;
 use rayon::iter::ParallelDrainRange;
 use pyo3::types::PySequence;
+
+
+
+// #[pymodule]
+// fn DataBase(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+//     m.add_class::<FastaDataBase>()?;
+//     Ok(())
+// }
+
+
 #[pymodule]
 fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+
+    #[pyclass]
+    #[pyo3(name = "FastaDataBase")]
+    struct FastaDataBase {
+        file_contents: Vec<Vec<u8>>,
+        // list of all contigs; first tuple element describes start position in some file_contents[i] for unknown  i;
+        // third gives len
+        contigs: Vec<(usize, usize)>,
+        // contigs_start[i]: first `contigs` index to loo for genome[i]
+        // contigs_start[i+1] - 1 : wlog, last `contigs` index for genome[i]
+        // to access first contig for genome i
+        //
+        // first_idx = contigs_start[i]
+        // lst contig idx =  contigs_start[i+1] -1
+        //
+        // file_contents[i][contigs[first_idx].0 .. first_idx].1] <-- to tsring
+        contigs_start: Vec<usize>,
+
+        // weight distribution for drawing contigs  from this genome (proportional to length of contig)
+        weight_index : Vec<WeightedIndex<usize>>,
+    }
+
+    m.add_class::<FastaDataBase>()?;
+
+impl FastaDataBase  {
+    fn get_contig_slice(&self, file_idx: usize, contig_idx :usize , pos: usize, len: usize) -> &[u8] {
+        &(&self.file_contents[file_idx][self.contigs[self.contigs_start[file_idx] + contig_idx].0..self.contigs[self.contigs_start[file_idx] + contig_idx].0+self.contigs[self.contigs_start[file_idx] + contig_idx].1])[pos..pos+len]
+    }
+}
+
+
+#[pymethods]
+impl FastaDataBase {
+    #[new]
+    fn new(contig_file_paths: Vec<String>, min_len: usize) -> Self {
+
+        let mut result = Self {
+            file_contents: Vec::new(),
+            contigs: Vec::new(),
+            contigs_start: Vec::new(),
+            weight_index: Vec::new(),
+        };
+
+        for contig_file in contig_file_paths.iter() {
+
+            let file_info = fs::metadata(contig_file).unwrap();
+            let file_size = file_info.len();
+
+            let mut file = File::open(contig_file).unwrap();
+
+            //read using multiple file handles for faster spead
+            let mut read_buffer: Vec<u8> = Vec::new();
+            par_read(&mut file, &mut read_buffer, file_size);
+
+            // if needs to be decompressed,  replace dataa buffer with decompressed one, otherwise leave as is;
+            // 'z' -> check for gz
+
+            let read_buffer = if contig_file.len() >3 && b'z'==contig_file.as_bytes()[contig_file.len()-1] {
+                let mut decom_buffer: Vec<u8> = Vec::new();
+                let mut gz = GzDecoder::new(&read_buffer[..]);
+                gz.read_to_end(&mut  decom_buffer).unwrap();
+                decom_buffer
+            } else {
+                read_buffer
+            };
+
+
+            result.contigs_start.push(result.contigs.len());
+
+            let mut current_pos_in_buffer = 0;
+
+            let mut contig_buffer = Vec::new();
+
+            // a vector of contig lengths, this is how we will weight draws
+            let mut to_weights = Vec::new();
+
+            read_buffer.split_inclusive(|x| *x == b'>')
+                                   .for_each(|name_contig| {
+                                    
+
+                                        if let Some(end_of_name_pos) = name_contig.iter().position(|&r| r == b'\n') {
+                                            // leaves '\n' and '>', but we handle those when counting kmers
+
+                                                               // leaves '\n' and '>', but we handle those when counting kmers
+
+                                            //check if meets min size
+                                            let size = name_contig[end_of_name_pos+1..].iter().filter(|&&x| x != b'\n' && x != b'>').count();
+
+
+                                            if size >= min_len {
+                                                //dbg!("included");
+                                                contig_buffer.extend(name_contig[end_of_name_pos+1..].iter().filter(|&&x| x != b'\n' && x != b'>'));
+                                                result.contigs.push((current_pos_in_buffer, size));
+                                                current_pos_in_buffer += size;
+                                                to_weights.push(size);
+                                            } 
+                                            //dbg!("hi", size);
+                                            // result.contigs.push((current_pos_in_buffer+end_of_name_pos+1, name_contig[end_of_name_pos+1..].len() ));
+                                            
+                                        }
+                                        
+                                   });
+            if let Ok(a) = WeightedIndex::new(&to_weights) {
+                result.weight_index.push(a);
+                result.file_contents.push(contig_buffer);
+            } else {
+                result.contigs_start.pop();
+            }
+            
+            
+        }
+
+        return result;
+    }
+    fn get_num_contig(&self, file_idx: usize) -> isize {
+        if file_idx >= self.contigs_start.len() {
+            return -1;
+        }
+        if file_idx == self.contigs_start.len()  -1 {
+            return (self.contigs.len() - self.contigs_start[file_idx]) as isize;
+        }
+        return (self.contigs_start[file_idx+1] - self.contigs_start[file_idx]) as isize;
+    }
+
+    fn get_num_contig_unch(&self, file_idx: usize) -> usize {
+        if file_idx == self.contigs_start.len()  -1 {
+            return (self.contigs.len() - self.contigs_start[file_idx]);
+        }
+        return (self.contigs_start[file_idx+1] - self.contigs_start[file_idx]);
+    }
+
+    fn get_contig_size(&self, file_idx: usize, contig_idx: usize) -> isize {
+        if file_idx >= self.contigs_start.len() {
+            return -1;
+        }
+        let num_contigs = if file_idx == self.contigs_start.len()  -1 {
+             (self.contigs.len() - self.contigs_start[file_idx])
+        } else  { 
+            (self.contigs_start[file_idx+1] - self.contigs_start[file_idx])
+        };
+
+        if contig_idx >= num_contigs {
+            return -1;
+        } else {
+            return self.contigs[self.contigs_start[file_idx] + contig_idx].1 as isize;
+        }
+    }
+
+    fn get_contig_size_unch(&self, file_idx: usize, contig_idx: usize) -> usize {
+        return self.contigs[self.contigs_start[file_idx] + contig_idx].1;
+    }
+    fn get_contig(&self, file_idx: usize, contig_idx: usize) -> String {
+        if file_idx >= self.contigs_start.len() {
+            return String::new();
+        }
+        let num_contigs = if file_idx == self.contigs_start.len()  -1 {
+             (self.contigs.len() - self.contigs_start[file_idx])
+        } else  { 
+            (self.contigs_start[file_idx+1] - self.contigs_start[file_idx])
+        };
+
+        if contig_idx >= num_contigs {
+            return  String::new();
+        } else {
+            return std::str::from_utf8(&self.file_contents[file_idx][self.contigs[self.contigs_start[file_idx] + contig_idx].0..self.contigs[self.contigs_start[file_idx] + contig_idx].0+self.contigs[self.contigs_start[file_idx] + contig_idx].1]).unwrap().to_string();
+        }
+    }
+
+    fn sample<'py>(&'py self, py: Python<'py>, n: usize, contig_sample_size: usize) -> (&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>, &'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<usize> ) {
+        let qq=  py.allow_threads(move || {
+        let mut rng = rand::thread_rng();
+
+
+        let to_sample = (0..n)
+                .map(|_| {
+                    let file_idx =rng.gen_range(0..self.file_contents.len());
+                    let contig_idx = self.weight_index[file_idx].sample(&mut rng);
+                    let start_pos =  rng.gen_range(0..self.get_contig_size_unch(file_idx, contig_idx)- contig_sample_size);
+                    (file_idx,contig_idx,start_pos)
+                })
+                .collect::<Vec<(usize,usize,usize)>>();
+
+        let pre_tens = to_sample.par_iter()
+                .map(| (file_idx,contig_idx,start_pos)|  (self.get_contig_slice(*file_idx,*contig_idx,*start_pos, contig_sample_size), *file_idx))
+                .map(|(ctg, file_idx)| (contig_2_nmer_distrs_bytes(ctg), find_rymers_bytes(ctg), file_idx) )
+                .map( |mut x| { 
+                    while   x.1.5 >= 500 {
+                        let mut rng = rand::thread_rng();
+                        let file_idx = x.2;
+                        let contig_idx = self.weight_index[file_idx].sample(&mut rng);// rng.gen_range(0..self.get_num_contig_unch(file_idx));
+                        let start_pos =  rng.gen_range(0..self.get_contig_size_unch(file_idx, contig_idx)- contig_sample_size);
+                        let ctg = self.get_contig_slice(file_idx,contig_idx,start_pos, contig_sample_size);
+                        x = (contig_2_nmer_distrs_bytes(ctg), find_rymers_bytes(ctg), file_idx) ;
+                    }
+                    x
+                })
+                .collect::<Vec<_>>();
+
+        let pre_5mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.0.0)
+                                .collect::<Vec<_>>();
+        
+        let pre_l4n1mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.0.1)
+                                .collect::<Vec<_>>();
+
+            
+        let pre_4mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.0.2)
+                                .collect::<Vec<_>>();
+        
+        let pre_3mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.0.3)
+                                .collect::<Vec<_>>();
+        
+        let pre_2mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.0.4)
+                                .collect::<Vec<_>>();
+            
+        let pre_1mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.0.5)
+                                .collect::<Vec<_>>();
+        
+                                let pre_10mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.0.0)
+                                .collect::<Vec<_>>();
+
+        let pre_9mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.1.1)
+                                .collect::<Vec<_>>();
+
+        let pre_8mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.1.2)
+                                .collect::<Vec<_>>();
+        let pre_7mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.1.3)
+                                .collect::<Vec<_>>();
+        let pre_6mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.1.4)
+                                .collect::<Vec<_>>();
+        let pre_10mers = pre_tens
+                                .par_iter()
+                                .flat_map_iter(|i| i.1.0)
+                                .collect::<Vec<_>>();
+        let label = pre_tens
+                                .par_iter()
+                                .map(|i| i.2)
+                                .collect::<Vec<_>>();
+
+  
+        let valids = pre_tens
+                                .par_iter()
+                                .map(|i| i.0.6)
+                                .collect::<Vec<_>>();
+
+                        
+                                // (
+                                //     pre_5mers.into_pyarray(py),
+                                //     pre_4mers.into_pyarray(py),
+                                //     pre_3mers.into_pyarray(py),
+                                //     pre_2mers.into_pyarray(py),
+                                //     pre_1mers.into_pyarray(py),
+                                //     pre_10mers.into_pyarray(py),
+                                //     pre_9mers.into_pyarray(py),
+                                //     pre_8mers.into_pyarray(py),
+                                //     pre_7mers.into_pyarray(py),
+                                //     pre_6mers.into_pyarray(py),
+                                //     label.into_pyarray(py)
+                                // )
+
+                                (
+                                    pre_5mers,
+                                    pre_l4n1mers,
+                                    pre_3mers,
+                                    pre_2mers,
+                                    pre_1mers,
+                                    pre_10mers,
+                                    pre_9mers,
+                                    pre_8mers,
+                                    pre_7mers,
+                                    pre_6mers,
+                                    label,
+                                ) });
+
+        (qq.0.into_pyarray(py),qq.1.into_pyarray(py),qq.2.into_pyarray(py),qq.3.into_pyarray(py),qq.4.into_pyarray(py),qq.5.into_pyarray(py),qq.6.into_pyarray(py),qq.7.into_pyarray(py),qq.8.into_pyarray(py),qq.9.into_pyarray(py),qq.10.into_pyarray(py))
+        //unimplemented!();
+        
+        // PyArray::from_slice(py, &pre_5mers)
+        
+    }
+
+        
+    
+}
+
+
     #[pyfn(m)]
     #[pyo3(name = "find_single")]
     pub fn find_single<'py>(py: Python<'py>, contig: &str) -> (&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>, &'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,usize ){
@@ -701,7 +1256,7 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
     #[pyfn(m)]
     #[pyo3(name = "find_nMer_distributions")]
-    pub fn find_nMer_distributions<'py>(py: Python<'py>, contig_file: &str) -> (&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>,&'py PyArray1<f32>, Vec<String>) {
+    pub fn find_nMer_distributions<'py>(py: Python<'py>, contig_file: &str, mini_size: usize) -> (Vec<usize>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>, &'py PyArray1<f32>,&'py PyArray1<f32>, Vec<String>) {
         //rayon::ThreadPoolBuilder::new().num_threads(32).build_global().unwrap();
         //rayon::ThreadPoolBuilder::new().num_threads(64).build_global().unwrap();
         let file_info = fs::metadata(contig_file).unwrap();
@@ -731,7 +1286,7 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
 
         // split on new fasta name delimitor, skip first trivial
-        let lines = string_slice_rep.par_split('>').filter(|x| x.len() >= 1000).collect::<Vec<_>>();
+        let lines = string_slice_rep.par_split('>').filter(|x| x.len() >= mini_size).collect::<Vec<_>>();
         //dbg!("here2");]
         
 
@@ -759,11 +1314,16 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
                     dbg!( lines.len());
                     panic!();
                 });
-                //let contig_len = line[end_of_name_pos + 1..line.len() - 1].chars().filter(|&x| x != '\n').count();
+                let end_of_name_pos2 = line[..end_of_name_pos].find(' ').unwrap_or(end_of_name_pos);
+                let contig_len = line[end_of_name_pos + 1..line.len() - 1].chars().filter(|&x| x != '\n').count();
                 // returns tuple of (contig name string slice, actual contig string slice ) for each line
-                (
-                    line[..end_of_name_pos].to_string(),
-                    &line[end_of_name_pos + 1..line.len() - 1])
+            
+                 (
+                        line[..end_of_name_pos2].to_string(),
+                        &line[end_of_name_pos + 1..line.len() - 1])
+                // (
+                //     line[..end_of_name_pos2].to_string(),
+                //     &line[end_of_name_pos + 1..line.len() - 1])
             })
             .unzip_into_vecs(&mut contig_names, &mut contigs);
             //dbg!("here5");
@@ -779,7 +1339,7 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         let contig_names = contig_names
             .par_drain(..)
             .enumerate()
-            .filter(|(a,b)| contig_lens[*a] >= 0  )
+            .filter(|(a,b)| contig_lens[*a] >= mini_size  )
             .map(|(a,ctg)|ctg)
             .collect::<Vec<_>>();
             //dbg!("here6");
@@ -787,7 +1347,7 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         let pre_tens = contigs
                 .par_iter()
                 .enumerate()
-                .filter(|(a,b)| contig_lens[*a] >= 0  )
+                .filter(|(a,b)| contig_lens[*a] >= mini_size  )
                 .map(|(a,&ctg)| contig_2_nmer_distrs(ctg))
                 .collect::<Vec<_>>();
                 //dbg!("here6");
@@ -795,7 +1355,7 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
         let pretens_ry= contigs
                         .par_iter()
                          .enumerate()
-                      .filter(|(a,b)| contig_lens[*a] >= 0  )
+                      .filter(|(a,b)| contig_lens[*a] >= mini_size )
                         .map(|(a,&ctg)| find_rymers(ctg))
                      .collect::<Vec<_>>();
 
@@ -859,7 +1419,7 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
                                 .collect::<Vec<usize>>();
                                 //dbg!("here7");
         (
-            pre_l4n1mers.into_pyarray(py),
+            contig_lens,
             pre_5mers.into_pyarray(py),
             pre_4mers.into_pyarray(py),
             pre_3mers.into_pyarray(py),
@@ -915,9 +1475,11 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
                     dbg!(lines.len());
                     panic!();
                 });
+                let end_of_name_pos2 = line[..end_of_name_pos].find(' ').unwrap_or(end_of_name_pos);
+
                 // returns tuple of (contig name string slice, actual contig string slice ) for each line
                 (
-                    &line[..end_of_name_pos],
+                    &line[..end_of_name_pos2],
                     &line[end_of_name_pos + 1..line.len() - 1],
                 )
             }) // collects tuples into these vecs 
