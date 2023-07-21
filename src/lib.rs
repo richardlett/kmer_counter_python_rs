@@ -5,6 +5,7 @@ use rand::{Rng, thread_rng};
 
 use rand::prelude::*;
 use rand::distributions::WeightedIndex;
+use indicatif::ProgressBar;
 
 
 
@@ -865,7 +866,6 @@ use pyo3::types::PySequence;
 //     Ok(())
 // }
 
-
 #[pymodule]
 fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
@@ -910,6 +910,8 @@ impl FastaDataBase {
             contigs_start: Vec::new(),
             weight_index: Vec::new(),
         };
+
+        let bar = ProgressBar::new(contig_file_paths.len() as u64);
 
         for contig_file in contig_file_paths.iter() {
 
@@ -976,9 +978,10 @@ impl FastaDataBase {
             } else {
                 result.contigs_start.pop();
             }
-            
+            bar.inc(1);
             
         }
+        bar.finish();
 
         return result;
     }
@@ -1054,7 +1057,7 @@ impl FastaDataBase {
                 .map(| (file_idx,contig_idx,start_pos)|  (self.get_contig_slice(*file_idx,*contig_idx,*start_pos, contig_sample_size), *file_idx))
                 .map(|(ctg, file_idx)| (contig_2_nmer_distrs_bytes(ctg), find_rymers_bytes(ctg), file_idx) )
                 .map( |mut x| { 
-                    while   x.1.5 >= 500 {
+                    while   x.1.5 >= 100 {
                         let mut rng = rand::thread_rng();
                         let file_idx = x.2;
                         let contig_idx = self.weight_index[file_idx].sample(&mut rng);// rng.gen_range(0..self.get_num_contig_unch(file_idx));
