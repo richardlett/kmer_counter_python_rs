@@ -86,7 +86,7 @@ more complicated example that returns a tensorflow dataset generator:
 
 import tensorflow as tf
 
-def generate_data(file_list, batch_size=1024):
+def generate_data(file_list):
     db = FastaDataBase(file_list, 2000)
     n_classes = len(file_list)
     print("Reading done")
