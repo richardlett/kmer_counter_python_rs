@@ -74,10 +74,10 @@ contig_lens = np.asarray(aaq[0])
 Put in a list of fasta files. Each will be considered a training class. The second number is min contig size for loading into database. This reduces memory requirements.
 ```python
 from kmer_counter import FastaDataBase
-db = FastaDataBase(['genome1.fa.gz','genome1.fa.gz`],1000)
+db = FastaDataBase(['genome1.fa.gz','genome2.fa.gz`],1000)
 # only sample greater than 2000 len, 1048576 // 4 samples are returned.
 numpy_arrays = db.sample(1048576 // 4, 2000)
-Usage as above
+# Usage similar to above, but last column is integer. see below
 ````
 
 more complicated example that returns a tensorflow dataset generator:
@@ -94,6 +94,7 @@ def generate_data(file_list):
     def data_generator():
         while True:
             aaq = db.sample(1048576 // 4, 2000)
+            # aaq[-1] is class label (integer, enumeration of genome). we turn it into 1 hot encoding for categorical cross entropy
             m = tf.one_hot(aaq[-1], n_classes + 1)
             input_tensors = tuple(tf.reshape(aaq[i], (-1, shape)) for i, shape in enumerate([512, 136, 32, 10, 2, 528, 256, 136, 64, 36]))
             yield input_tensors, m
