@@ -62,7 +62,7 @@ aaq = kmer_counter.find_nMer_distributions(input_file, min_contig_length)
 # (for example, notice there are 136 canonical 4-mers.)
 inpts = [np.reshape(aaq[i], (-1, size)) for i, size in enumerate([512, 136, 32, 10, 2, 528, 256, 136, 64, 36], start=1)]
 
-# Usage: inputs[0][n] gives 5-mer count array for nth contig in fasta.
+# Usage: inpts[1][n] gives r-mer count array (of size 136) for nth contig in fasta.
 
 contig_names = np.asarray(aaq[-1])
 
