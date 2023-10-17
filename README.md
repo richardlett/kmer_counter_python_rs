@@ -7,7 +7,7 @@ This github repo is the kmer counting module for GenomeFace. It has a few  funct
 1. Count kmers from an arbitrarily (optionally gzipped) fasta file, returning numpy arrays of l1 normalzied kmer counts, along with contig names (1-5,6-10 degenerate RYmers).
 2. Create a "database" datastructure of genomes which contigs can be sampled from for training the compositional neural network. Genomes are loaded in. When sample is called on the database datastructure, a similar to point #1, a bunch of kmers are returned in numpy format, along with an integer indicating which genome it came from (used for ground truth to train the neural network with.
 3. It also has an accesorry function for rewriting contigs from an assembly into individual bins.
-4. Do it all fast. Written in Rust and multithreaded.  Thge training database releases the Python Global Interpreter Lock, allowing tensorflow to resume execution. This allows tensorflow to train on batch N with the GPUs while we are generating training data for batches N+1, N+2 with the CPU.
+4. Do it all fast. Written in Rust and multithreaded.  The training database releases the Python Global Interpreter Lock, allowing tensorflow to resume execution. This allows tensorflow to train on batch N with the GPUs while we are generating training data for batches N+1, N+2 with the CPU.
 
 # Build and install instructions
 If you don't have rust, install it with (yes, this curl is offical installer)
