@@ -119,7 +119,7 @@ const RY8TBL: [u32;256]  = gen_ry_table::<8,256>();
 const RY7TBL: [u32;128]  = gen_ry_table::<7,128>();
 const RY6TBL: [u32;64]  = gen_ry_table::<6,64>();
 
-// /// Maps individual DNA bases from utf-8 to 2 bit representation
+// /// Maps individual DNA bases from utf-8 to 1 bit representation
 const fn base2number_ry(c: u8) -> Option<u8> {
     match c {
         b'A'| b'a' |  b'G'| b'g' => Some(0),
