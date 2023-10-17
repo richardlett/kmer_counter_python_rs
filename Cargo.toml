@@ -18,7 +18,7 @@ flate2 = { version = "1.0.17"} # features = ["zlib-ng"], default-features = fals
 pyo3 = { version = "0.17", features = ["extension-module"] }
 hashbrown = { version = "*", features = ["rayon"] }
 rand = { version = "*", features = ["std"] }
-
+indicatif = "*"
 numpy = "0.17"
 rayon = "*"
 
