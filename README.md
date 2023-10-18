@@ -45,7 +45,7 @@ CARGO_HOME=$SCRATCH/cargo maturin develop --release -- -C target-cpu=native
 
 ## Dev Usage
 ### K-mer Counting from Fasta
-The numpy arrays returned are not shaped correctly by default. Although it's recommended to have a cleaner solution, for now, you can resize them as follows:
+The numpy arrays returned are not shaped correctly by default. Although I hope to have a cleaner API later, for now, you can resize them as follows:
 
 ```python
 import kmer_counter
