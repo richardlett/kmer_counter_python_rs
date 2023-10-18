@@ -113,7 +113,7 @@ def generate_data(file_list):
 This function:
 
 1. Reads the original fasta file of the assembly.
-2. Accepts two numpy arrays: one containing integer labels (indicating that two contigs belong to the same bin if they share the same integer label), and the other listing the corresponding contig names.
+2. Accepts two lists: one containing integer labels (indicating that two contigs belong to the same bin if they share the same integer label), and the other listing the corresponding contig names.
 3. Specifies an output folder path to store the output bins. Ensure the output folder doesn't already exist, as it will be created.
 
 Here's an example:
