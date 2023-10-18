@@ -1,89 +1,83 @@
-
 # kmer_counter_python_rs
 
-# Intro
-This github repo is the kmer counting module for GenomeFace. It has a few  functions
+## Intro
+This GitHub repository contains the k-mer counting module for GenomeFace. It offers several functions:
 
-1. Count kmers from an arbitrarily (optionally gzipped) fasta file, returning numpy arrays of l1 normalzied kmer counts, along with contig names (1-5,6-10 degenerate RYmers).
-2. Create a "database" datastructure of genomes which contigs can be sampled from for training the compositional neural network. Genomes are loaded in. When sample is called on the database datastructure, a similar to point #1, a bunch of kmers are returned in numpy format, along with an integer indicating which genome it came from (used for ground truth to train the neural network with.
-3. It also has an accesorry function for rewriting contigs from an assembly into individual bins.
-4. Do it all fast. Written in Rust and multithreaded.  The training database releases the Python Global Interpreter Lock, allowing tensorflow to resume execution. This allows tensorflow to train on batch N with the GPUs while we are generating training data for batches N+1, N+2 with the CPU.
+1. Count k-mers from an arbitrary (optionally gzipped) fasta file. It returns numpy arrays of L1 normalized k-mer counts along with the contig names (ranging from 1-5 to 6-10 for degenerate RY-mers).
+2. Construct a "database" data structure from genomes, allowing contigs to be sampled. This aids in training the compositional neural network. Once the genomes are loaded, the `sample` function returns L1 normalized k-mers in numpy format with an integer indicating the genome source, which is then used as ground truth for neural network training.
+3. Provide an accessory function for rewriting contigs from an assembly into individual bins.
+4. Ensure high performance by being written in Rust and leveraging multithreading. The training database releases the Python Global Interpreter Lock, letting TensorFlow execute. This means TensorFlow can train on batch N using the GPUs while concurrently generating training data for batches N+1, N+2, etc. on the CPU.
 
-# Build and install instructions
-If you don't have rust, install it with (yes, this curl is offical installer)
-```
+## Build and Install Instructions
+If you don't have Rust installed, use the official installer:
+```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-then Install maturin, a toolchain for rust/python integration package
+Next, install maturin, a toolchain for integrating Rust and Python:
 
-```
+```bash
 mamba install -c conda-forge maturin
 # or 
 conda install -c conda-forge maturin
 # or
 pip install maturin
-
 ```
 
-To build and install this python package to your current python environment,  `cd` into this repo, and 
-```
+To build and install this Python package in your current Python environment, navigate (`cd`) to this repository and run:
+
+```bash
 maturin develop --release
 ```
-To tune for current system's CPU (this may break system compatibility!)
 
-```
+To optimize for your current system's CPU (be cautious as this might reduce compatibility):
+
+```bash
 maturin develop --release -- -C target-cpu=native
 ```
 
-note, you can set CARGO_HOME enviorment variable to scratch to save space when downloading dependencies
+If you wish to save space when downloading dependencies, you can set the CARGO_HOME environment variable to scratch:
 
-```
+```bash
 mkdir $SCRATCH/cargo
 CARGO_HOME=$SCRATCH/cargo maturin develop --release -- -C target-cpu=native
 ```
 
-# Dev Usage
-## Kmer Counting from fasta
-
-The numpy arrays are not shaped correctly upon return. (I should probably add something cleaner, but this is more of an internal library for my own use)
-
-Anyway, we just need to resize them for a 
+## Dev Usage
+### K-mer Counting from Fasta
+The numpy arrays returned are not shaped correctly by default. Although it's recommended to have a cleaner solution, for now, you can resize them as follows:
 
 ```python
 import kmer_counter
 import numpy as np
+
 input_file = "filepath.fasta.gz"
-min_contig_len = 1500 # shorter will be ignored
-aaq = kmer_counter.find_nMer_distributions(input_file, min_contig_length)
-# a bunch of 1d numpy arrays are returned. We reshape them to appropriate size.
-# The actual indexing of which canonical kmer is what index is arbitrary (you can check the code),
-# but the corresponding kmers are: 5, 4, 3, 2, 1, Then 10, 9, 8 ,7,5 for  degenerate RY-mers.
-# (for example, notice there are 136 canonical 4-mers.)
+min_contig_len = 1500  # Contigs shorter than this will be ignored
+aaq = kmer_counter.find_nMer_distributions(input_file, min_contig_len)
+
+# Reshape the returned 1D numpy arrays to their appropriate sizes.
+# Refer to the code to determine which canonical k-mer corresponds to each index.
 inpts = [np.reshape(aaq[i], (-1, size)) for i, size in enumerate([512, 136, 32, 10, 2, 528, 256, 136, 64, 36], start=1)]
 
-# Usage: inpts[1][n] gives 4-mer count array (of size 136) for nth contig in fasta.
-
+# Example: inpts[1][n] provides the 4-mer count array (of size 136) for the nth contig in the fasta.
 contig_names = np.asarray(aaq[-1])
-
 contig_lens = np.asarray(aaq[0])
-# Usage: contig_names[n], contig_lens[n] gives name, length of nth contig in fasta
 ```
 
-## Training dataset generator:
-Put in a list of fasta files. Each will be considered a training class. The second number is min contig size for loading into database. This reduces memory requirements.
+### Training Dataset Generator:
+Supply a list of fasta files. Each file will be considered as a training class. The second number indicates the minimum contig size to load into the database to manage memory requirements.
+
 ```python
 from kmer_counter import FastaDataBase
-db = FastaDataBase(['genome1.fa.gz','genome2.fa.gz`],1000)
-# only sample greater than 2000 len, 1048576 // 4 samples are returned.
-numpy_arrays = db.sample(1048576 // 4, 2000)
-# Usage similar to above, but last column is integer. see below
-````
 
-more complicated example that returns a tensorflow dataset generator:
+db = FastaDataBase(['genome1.fa.gz','genome2.fa.gz'], 1000)
+# Sample contigs greater than 2000 in length. It returns 1048576 // 4 samples.
+numpy_arrays = db.sample(1048576 // 4, 2000)
+```
+
+For a more advanced example that yields a TensorFlow dataset generator:
 
 ```python
-
 import tensorflow as tf
 
 def generate_data(file_list):
@@ -94,7 +88,7 @@ def generate_data(file_list):
     def data_generator():
         while True:
             aaq = db.sample(1048576 // 4, 2000)
-            # aaq[-1] is class label (integer, enumeration of genome). we turn it into 1 hot encoding for categorical cross entropy
+            # Convert the class label (integer) to one-hot encoding for categorical cross-entropy
             m = tf.one_hot(aaq[-1], n_classes + 1)
             input_tensors = tuple(tf.reshape(aaq[i], (-1, shape)) for i, shape in enumerate([512, 136, 32, 10, 2, 528, 256, 136, 64, 36]))
             yield input_tensors, m
@@ -108,22 +102,24 @@ def generate_data(file_list):
     return data, n_classes
 ```
 
-## Fasta bin writer.
+### Fasta Bin Writer:
 
-Takes the 
-1.  Original fasta file of assembly, contigs will be retrieved from this based on names fed in.
-2.  Two numpy arrays. One which contains integer labels (two contigs are in same bin if they have same integer label). The other of corresponding contig name.
-3.  output Folder path to write output bins. Output Folder should not exist, it will be created
+This function:
 
-example
+1. Reads the original fasta file of the assembly.
+2. Accepts two numpy arrays: one containing integer labels (indicating that two contigs belong to the same bin if they share the same integer label), and the other listing the corresponding contig names.
+3. Specifies an output folder path to store the output bins. Ensure the output folder doesn't already exist, as it will be created.
+
+Here's an example:
+
 ```python
 import kmer_counter
+
 input_fasta = "contigs.fa.gz"
 output_folder_path = "genomeface_bins/"
-contig_names = ["contig1", "contig2", "contig3, "contig4", "contig5", "contig6"]
-contig_labels = [0, 1, 1, 3, 2, 2] # there are 4 bins. contig 1 belongs to bin 0. contig2  belongs to bin 1, etc.
+contig_names = ["contig1", "contig2", "contig3", "contig4", "contig5", "contig6"]
+contig_labels = [0, 1, 1, 3, 2, 2]  # Contig labels for bins. For example, contig1 belongs to bin 0, contig2 to bin 1, and so on.
 
-bases_binned = kmer_counter.write_fasta_bins(contig_names, contig_labels, input_fasta,  output_folder_path)
-print("There were", bases_binned,"bases binned.")
-
+bases_binned = kmer_counter.write_fasta_bins(contig_names, contig_labels, input_fasta, output_folder_path)
+print("There were", bases_binned, "bases binned.")
 ```
