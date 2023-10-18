@@ -63,6 +63,7 @@ inpts = [np.reshape(aaq[i], (-1, size)) for i, size in enumerate([512, 136, 32, 
 contig_names = np.asarray(aaq[-1])
 contig_lens = np.asarray(aaq[0])
 ```
+The first five indexes correspond to canonical (i.e. rev comp seen as equivalent) 5,4,3,2,1 mer frequencies,then 10,9,8,7,6 mers canonical RY-mer frequencies
 
 ### Training Dataset Generator:
 Supply a list of fasta files. Each file will be considered as a training class. The second number indicates the minimum contig size to load into the database to manage memory requirements.
