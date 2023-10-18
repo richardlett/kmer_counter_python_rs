@@ -43,7 +43,7 @@ mkdir $SCRATCH/cargo
 CARGO_HOME=$SCRATCH/cargo maturin develop --release -- -C target-cpu=native
 ```
 
-Note: `maturin build --release` will build a python '.whl' package for distribution, which can be installed with `pip`. It will be placed in a subdirectory of `repo/target/` (but I forgot where).
+Note: `maturin build --release` will build a python '.whl' package for distribution, which can be installed with `pip install filename.whl`. It will be placed in a subdirectory of `repo/target/` (but I forgot where).
 
 ## Dev Usage
 ### K-mer Counting from Fasta
