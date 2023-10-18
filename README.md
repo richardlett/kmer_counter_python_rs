@@ -79,6 +79,7 @@ For a more advanced example that yields a TensorFlow dataset generator:
 
 ```python
 import tensorflow as tf
+from kmer_counter import FastaDataBase
 
 def generate_data(file_list):
     db = FastaDataBase(file_list, 2000)
