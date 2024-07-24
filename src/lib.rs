@@ -22,6 +22,8 @@ use pyo3::prelude::*;
 
 
 
+
+
 // NOTE: The arrays below are not used at run time ever, and should be optimized out.
 //
 // These arrays are used to at compile time to binary lookuptables from 2 bit encodings of DNA Bases to their representitive index i.e. the index shared between a kmer and it's
@@ -433,6 +435,16 @@ const fn base2number(c: u8) -> Option<u8> {
     }
 }
 
+const fn base2number_revcomp(c: u8) -> Option<u8> {
+    match c {
+        b'A'| b'a' => Some(1),
+        b'T'| b't' => Some(0),
+        b'C'| b'c' => Some(3),
+        b'G'| b'g' => Some(2),
+        _ => None,
+    }
+}
+
 /// Maps 4mer from utf-8 to 8 bit representation
 const fn kmer_to_16_bit<const N: usize>( mer:  & str) -> Option<u32> {
     let mut result: u32 = 0;
@@ -479,6 +491,29 @@ const fn kmer_to_16_bit_ray<const N: usize>( mer:  & [u8]) -> Option<u32> {
 
     Some(result)
 }
+
+
+const fn kmer_to_16_bit_ray_revcomp<const N: usize>( mer:  & [u8]) -> Option<u32> {
+    let mut result: u32 = 0;
+    let mut i = 0;
+    loop {
+        if i >= N {
+            break;
+        }
+        let c = mer[N-i -1];
+        result = result << 2;
+        result |= match base2number_revcomp(c) {
+            Some(b) => b as u32,
+            None => {
+                return None;
+            }
+        };
+        i += 1;
+    }
+
+    Some(result)
+}
+
 
 
 const fn gen_Nmer_table<const N: usize, const K: usize>(mapping: [(&'static str, usize);N] ) -> [u32; N] {
@@ -532,6 +567,49 @@ fn norm_vector_f<const N: usize>(in_vec: [f32;N]) -> [f32; N] {
 
     result
 }
+
+
+
+fn contig_to_labeled(contig: &[u8]) -> [u32;2000] {
+    let mut result = [0u32;2000];
+    
+    for (idx, chunk) in contig.windows(5).enumerate() {
+        result[idx] = kmer_to_16_bit_ray::<5>(chunk).unwrap_or_else( || 1024) as u32;
+    }
+    result
+}
+
+
+fn contig_to_labeled_flip(contig: &[u8],flip: bool) -> [u32;2000] {
+    let mut result = [0u32;2000];
+
+    // let max = if contig.len() < 2000 { contig.len() } else { 2000 };
+    if flip {
+        let window_size = 5;
+        for (idx, i) in (window_size..=contig.len()).rev().enumerate() {
+            let window = &contig[i - window_size..i];
+            result[idx] = kmer_to_16_bit_ray_revcomp::<5>(window).unwrap_or_else( || 1024) as u32;
+          }
+    } else {
+
+        for (idx, chunk) in contig.windows(5).enumerate() {
+            result[idx] = kmer_to_16_bit_ray::<5>(chunk).unwrap_or_else( || 1024) as u32;
+        }   
+    }
+    result
+    
+}
+
+
+fn contig_to_labeled2(contig: &[u8]) -> [u32;2000] {
+    let mut result = [0u32;2000];
+    // let max = if contig.len() < 2000 { contig.len() } else { 2000 };
+    for (idx, chunk) in contig.chunks(1).enumerate() {
+        result[idx] = kmer_to_16_bit_ray::<1>(chunk).unwrap_or_else( || 4) as u32;
+    }
+    result
+}
+
 
 
 
@@ -866,6 +944,275 @@ use pyo3::types::PySequence;
 //     Ok(())
 // }
 
+use std::time::Instant;
+use std::io::BufReader;
+use std::io::BufRead;
+
+enum NodeType {
+    Leaf { point_idx: u32 },
+    Internal { left: u32, right: u32 },
+}
+
+struct DendrogramNode {
+    marker_counts: [u32; 40],
+    reward: f32,
+    opt: bool,
+    node_type: NodeType,
+}
+
+
+fn reward(ci: [u32; 40]) -> f32 {
+    // Calculate TP
+    let tp: u32 = ci.iter().map(|&count| std::cmp::min(count, 1)).sum();
+
+    // Calculate FP
+    let fp: u32 = ci.iter().map(|&count| count.saturating_sub(1)).sum();
+
+    // Calculate FN
+    let fn_val: u32 = 40 - tp;
+
+    // Calculate Purity
+    let denominator_p = (tp + fp);
+    let p = if denominator_p == 0 {
+        0.0
+    } else {
+        tp as f32 / (denominator_p as f32)
+    };
+
+    // Calculate F1 Score
+    let denominator_f1 = (2 * tp + fp + fn_val);
+    let f1 = if denominator_f1 == 0 {
+        0.0
+    } else {
+        (2 * tp) as f32 / (denominator_f1 as f32)
+    };
+
+    // Calculate Reward
+    if p >= 0.85 {
+        (f1*f1*f1*f1) as f32
+    } else {
+        0.0
+    }
+}
+
+impl DendrogramNode {
+    #[inline(always)]
+    fn marker_counts(&self) -> &[u32; 40] {
+        &self.marker_counts
+    }
+
+    #[inline(always)]
+    fn reward(&self) -> f32 {
+        self.reward
+    }
+}
+
+use std::hint::black_box;
+struct UnionFind {
+    parent: Vec<usize>,
+    rank: Vec<usize>,
+    dendrogram_node: Vec<DendrogramNode>,
+}
+
+impl UnionFind {
+    #[inline(always)]
+    fn new(n: usize, markers: &[[u32;40]]) -> Self {
+        let mut parent_node = Vec::with_capacity(2 * n - 1);
+        let mut dendrogram_node = Vec::with_capacity(2 * n - 1);
+        let mut rank_node = Vec::with_capacity(2 * n - 1);
+        for i in 0..n {
+            parent_node.push(i as usize);
+        }
+        for i in 0..n {
+            dendrogram_node.push(DendrogramNode {
+                reward: reward(markers[i]),
+                opt: true,
+                marker_counts: markers[i],
+                node_type: NodeType::Leaf { point_idx: i as u32},
+            });
+            rank_node.push(0);
+        }
+        Self {
+            parent: parent_node,
+            rank: rank_node,
+            dendrogram_node,
+        }
+    }
+
+    #[inline(always)]
+    fn find(&mut self, mut u: usize) -> usize {
+        let mut path = Vec::new();
+        while self.parent[u] != u {
+            path.push(u);
+            u = self.parent[u];
+        }
+        for vertex in path {
+            self.parent[vertex] = u;
+        }
+        u
+    }
+    #[inline(always)]
+    fn merge(&mut self, u: usize, v: usize) {
+        let mut u = self.find(u);
+        let mut v = self.find(v);
+        if self.rank[u] > self.rank[v] {
+            std::mem::swap(&mut u, &mut v);
+        }
+
+        let new_node_idx = self.dendrogram_node.len();
+
+        // Update parent and rank vectors to include the new node
+        self.parent.push(new_node_idx);
+        self.rank.push(0);
+        let mut markers = [0; 40];
+        for i in 0..40 {
+            markers[i] = self.dendrogram_node[u].marker_counts()[i]
+                + self.dendrogram_node[v].marker_counts()[i];
+        }
+        let rew = reward(markers);
+        let is_optimal = rew >= self.dendrogram_node[u].reward() + self.dendrogram_node[v].reward();
+
+        let reward_prime = if is_optimal {
+            rew
+        } else {
+            self.dendrogram_node[u].reward() + self.dendrogram_node[v].reward()
+        };
+
+
+
+        let new_node = DendrogramNode {
+            reward: reward_prime,
+            opt: is_optimal,
+            marker_counts: markers,
+            node_type: NodeType::Internal {
+                left: u as u32,
+                right: v as u32,
+            }
+        };
+
+        self.dendrogram_node.push(new_node);
+
+        if self.rank[u] == self.rank[v] {
+            self.rank[v] += 1;
+        }
+
+        self.parent[u] = new_node_idx;
+        self.parent[v] = new_node_idx;
+    }
+}
+
+fn build_dendrogram(
+    weights: Vec<f32>,
+    src: Vec<usize>,
+    dst: Vec<usize>,
+    markers: Vec<[u32;40]>
+) -> (usize, Vec<DendrogramNode>) {
+    let n = src.len() + 1;
+    let mut uf = UnionFind::new(n, &markers);
+
+    for (&u, &v) in src.iter().zip(dst.iter()) {
+        uf.merge(u, v);
+    }
+
+    let root_idx = uf.find(0);
+
+    (root_idx, uf.dendrogram_node)
+}
+fn collect_leaves(node: &DendrogramNode, nodes: &Vec<DendrogramNode>, point_indices: &mut Vec<u32>) {
+    let mut stack = vec![node];
+    while !stack.is_empty() {
+        let tmp = stack.pop().unwrap();
+        match tmp.node_type {
+            NodeType::Leaf { point_idx } => point_indices.push(point_idx),
+            NodeType::Internal { left, right } => {
+                stack.push(&nodes[right as usize]);
+                stack.push(&nodes[left as usize]);
+            }
+        }
+    }
+}
+
+fn traverse_tree(nodes: &Vec<DendrogramNode>, root_index: u32) -> (Vec<u32>, Vec<usize>) {
+    let mut point_indices = Vec::new();
+    let mut group_starts = Vec::new();
+    let mut stack = vec![&nodes[root_index as usize]];
+
+    while !stack.is_empty() {
+        let tmp = stack.pop().unwrap();
+        match tmp.node_type {
+            NodeType::Leaf { point_idx } => {
+                group_starts.push(point_indices.len());
+                point_indices.push(point_idx);
+            },
+            NodeType::Internal { left, right } => {
+                if tmp.opt {
+                    group_starts.push(point_indices.len());
+                    collect_leaves(&nodes[left as usize], nodes, &mut point_indices);
+                    collect_leaves(&nodes[right as usize], nodes, &mut point_indices);
+                } else {
+                    stack.push(&nodes[right as usize]);
+                    stack.push(&nodes[left as usize]);
+                }
+            }
+        }
+    }
+    
+    (point_indices, group_starts)
+}
+
+
+fn find_markers(filepath: &str, names: &[String]) -> Vec<[u32; 40]> {
+    // Read the entire file into a String
+    let mut file = File::open(filepath).unwrap();
+    let mut content = String::new();
+    file.read_to_string(&mut content).unwrap();
+
+    let mut gene_to_index: HashMap<&str, usize> = HashMap::new();
+    let mut contig_to_counts: HashMap<&str, [u32; 40]> = HashMap::new();
+
+    for line in content.lines() {
+        let mut columns_iter = line.split('\t');
+            let contig = match columns_iter.next() {
+                Some(s) => s,
+                None => continue,
+            };
+        
+            let gene = match columns_iter.next() {
+                Some(s) => s,
+                None => continue,
+            };
+        
+            if columns_iter.next().is_some() {
+                continue;
+            }
+        
+        if gene == "COG0086" {
+            continue;
+        }
+
+        if !gene_to_index.contains_key(gene) {
+            let next_index = gene_to_index.len();
+            if next_index < 40 {
+                gene_to_index.insert(gene, next_index);
+            } else {
+                // Handle error: more than 40 unique genes
+                panic!("More than 40 unique genes found!");
+            }
+        }
+
+        let gene_index = *gene_to_index.get(gene).unwrap();
+        let counts = contig_to_counts.entry(contig).or_insert([0u32; 40]);
+        counts[gene_index] += 1;
+    }
+
+    names.iter()
+        .map(|name| contig_to_counts.get(name.as_str()).unwrap_or(&[0u32; 40]))
+        .cloned()
+        .collect()
+}
+
+
+
 #[pymodule]
 fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
@@ -888,9 +1235,14 @@ fn kmer_counter(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
 
         // weight distribution for drawing contigs  from this genome (proportional to length of contig)
         weight_index : Vec<WeightedIndex<usize>>,
+        totalranks: usize,
+        myrank: usize,
     }
 
     m.add_class::<FastaDataBase>()?;
+
+    m.add_class::<PyFastaIterator>()?;
+    
 
 impl FastaDataBase  {
     fn get_contig_slice(&self, file_idx: usize, contig_idx :usize , pos: usize, len: usize) -> &[u8] {
@@ -902,19 +1254,24 @@ impl FastaDataBase  {
 #[pymethods]
 impl FastaDataBase {
     #[new]
-    fn new(contig_file_paths: Vec<String>, min_len: usize) -> Self {
+    fn new(contig_file_paths: Vec<String>, min_len: usize, myrank: usize,totalranks: usize) -> Self {
 
         let mut result = Self {
             file_contents: Vec::new(),
             contigs: Vec::new(),
             contigs_start: Vec::new(),
             weight_index: Vec::new(),
+            totalranks: totalranks,
+            myrank: myrank,
         };
 
         let bar = ProgressBar::new(contig_file_paths.len() as u64);
+        for (idx, contig_file) in contig_file_paths.iter().enumerate() {
 
-        for contig_file in contig_file_paths.iter() {
-
+            if idx % totalranks != myrank {
+                bar.inc(1);
+                continue;
+            }
             let file_info = fs::metadata(contig_file).unwrap();
             let file_size = file_info.len();
 
@@ -1039,6 +1396,96 @@ impl FastaDataBase {
         }
     }
 
+    fn sample_beta<'py>(&'py self, py: Python<'py>, n: usize, contig_sample_size: usize) -> (&'py PyArray1<u32>, &'py PyArray1<usize> ) {
+        let qq =  py.allow_threads(move || {
+            let mut rng = rand::thread_rng();
+            let to_sample = (0..n)
+            .map(|_| {
+                let file_idx =rng.gen_range(0..self.file_contents.len());
+                let contig_idx = self.weight_index[file_idx].sample(&mut rng);
+                let start_pos =  rng.gen_range(0..self.get_contig_size_unch(file_idx, contig_idx)- contig_sample_size);
+                (file_idx,contig_idx,start_pos)
+            })
+            .collect::<Vec<(usize,usize,usize)>>();
+
+            let pre_tens = to_sample.par_iter()
+            .map(| (file_idx,contig_idx,start_pos)|  (self.get_contig_slice(*file_idx,*contig_idx,*start_pos, contig_sample_size), *file_idx))
+            .map_init(|| StdRng::from_entropy(), |rng, (ctg, file_idx)| (contig_to_labeled_flip(ctg,rng.gen_bool(0.5)), self.totalranks*file_idx + self.myrank) )
+            .map( |mut x| { 
+                while   x.0.iter().filter(|&x| *x != 1024).count() < contig_sample_size {
+                    let mut rng = rand::thread_rng();
+                    let file_idx = (x.1 - self.myrank)/ self.totalranks;
+                    let contig_idx = self.weight_index[file_idx].sample(&mut rng);// rng.gen_range(0..self.get_num_contig_unch(file_idx));
+                    let start_pos =  rng.gen_range(0..self.get_contig_size_unch(file_idx, contig_idx)- contig_sample_size);
+                    let ctg = self.get_contig_slice(file_idx,contig_idx,start_pos, contig_sample_size);
+                    x = (contig_to_labeled(ctg), self.totalranks*file_idx + self.myrank) ;
+                }
+                x
+            })
+            .collect::<Vec<([u32;2000],usize)>>();
+
+            let seq = pre_tens
+                .par_iter()
+                .flat_map_iter(|i| i.0)
+                .collect::<Vec<_>>();
+            let lbls = pre_tens
+                .par_iter()
+                .map(|i| i.1)
+                .collect::<Vec<_>>();
+            (seq, lbls)
+        });
+
+        (qq.0.into_pyarray(py), qq.1.into_pyarray(py))
+
+    
+    }
+
+    fn sample_beta2<'py>(&'py self, py: Python<'py>, n: usize, contig_sample_size: usize) -> (&'py PyArray1<u32>, &'py PyArray1<usize> ) {
+        let qq =  py.allow_threads(move || {
+            let mut rng = rand::thread_rng();
+            let to_sample = (0..n)
+            .map(|_| {
+                let file_idx =rng.gen_range(0..self.file_contents.len());
+                let contig_idx = self.weight_index[file_idx].sample(&mut rng);
+                let start_pos =  rng.gen_range(0..self.get_contig_size_unch(file_idx, contig_idx)- contig_sample_size);
+                (file_idx,contig_idx,start_pos)
+            })
+            .collect::<Vec<(usize,usize,usize)>>();
+
+
+            let pre_tens = to_sample.par_iter()
+            .map(| (file_idx,contig_idx,start_pos)|  (self.get_contig_slice(*file_idx,*contig_idx,*start_pos, contig_sample_size), *file_idx))
+            .map(|(ctg, file_idx)| (contig_to_labeled2(ctg), file_idx) )
+            .map( |mut x| { 
+                while   x.0.iter().filter(|&x| *x != 4).count() < 2000 {
+                    let mut rng = rand::thread_rng();
+                    let file_idx = x.1;
+                    let contig_idx = self.weight_index[file_idx].sample(&mut rng);// rng.gen_range(0..self.get_num_contig_unch(file_idx));
+                    let start_pos =  rng.gen_range(0..self.get_contig_size_unch(file_idx, contig_idx)- contig_sample_size);
+                    let ctg = self.get_contig_slice(file_idx,contig_idx,start_pos, contig_sample_size);
+                    x = (contig_to_labeled2(ctg), file_idx) ;
+                }
+                x
+            })
+            .collect::<Vec<([u32;2000],usize)>>();
+
+            let seq = pre_tens
+                .par_iter()
+                .flat_map_iter(|i| i.0)
+                .collect::<Vec<_>>();
+            let lbls = pre_tens
+                .par_iter()
+                .map(|i| i.1)
+                .collect::<Vec<_>>();
+            (seq, lbls)
+        });
+
+        (qq.0.into_pyarray(py), qq.1.into_pyarray(py))
+
+    
+    }
+
+
     fn sample<'py>(&'py self, py: Python<'py>, n: usize, contig_sample_size: usize) -> (&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>, &'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<f32>,&'py PyArray1<usize> ) {
         let qq=  py.allow_threads(move || {
         let mut rng = rand::thread_rng();
@@ -1056,8 +1503,8 @@ impl FastaDataBase {
         let pre_tens = to_sample.par_iter()
                 .map(| (file_idx,contig_idx,start_pos)|  (self.get_contig_slice(*file_idx,*contig_idx,*start_pos, contig_sample_size), *file_idx))
                 .map(|(ctg, file_idx)| (contig_2_nmer_distrs_bytes(ctg), find_rymers_bytes(ctg), file_idx) )
-                .map( |mut x| { 
-                    while   x.1.5 >= 100 {
+                .map( |mut x| { // FIXME revert to 100?
+                    while   x.1.5 >= 1 {
                         let mut rng = rand::thread_rng();
                         let file_idx = x.2;
                         let contig_idx = self.weight_index[file_idx].sample(&mut rng);// rng.gen_range(0..self.get_num_contig_unch(file_idx));
@@ -1185,6 +1632,8 @@ impl FastaDataBase {
         return (PyArray::from_slice(py, &res.1), PyArray::from_slice(py, &res.0), PyArray::from_slice(py, &res.2), PyArray::from_slice(py, &res.3),PyArray::from_slice(py, &res.4),PyArray::from_slice(py, &res.5),
                 PyArray::from_slice(py, &res2.0) ,PyArray::from_slice(py, &res2.1) ,PyArray::from_slice(py, &res2.2), PyArray::from_slice(py, &res2.3),PyArray::from_slice(py, &res2.4),   res2.5);
     }
+
+
 
 
     #[pyfn(m)]
@@ -1436,6 +1885,30 @@ impl FastaDataBase {
             contig_names
         )
     }
+
+    #[pyfn(m)]
+    #[pyo3(name = "acumen")]
+    pub fn acumen<'py>(py: Python<'py>, filepath: String,  names: Vec<String>, src: Vec<usize>, dst: Vec<usize>, weights: Vec<f32>) -> Vec<isize>{
+        let markers = find_markers(&filepath, &names);
+        let (root_idx, tree_vec) = build_dendrogram(weights, src, dst, markers); 
+        let root_idx = tree_vec.len() - 1;
+        let (contig_idxs, mut cluster_start) = traverse_tree(&tree_vec, root_idx as u32);
+        cluster_start.push(contig_idxs.len());
+        let mut result = vec![-1;names.len()];
+
+
+        for (cluster_num, window) in cluster_start.windows(2)
+                                .enumerate() {
+            let start = window[0];
+            let end = window[1];
+            for contig_idx  in contig_idxs[start..end].iter() {
+                result[*contig_idx as usize] = cluster_num as isize;
+            }
+        }
+        result
+
+    }
+
     #[pyfn(m)]
     #[pyo3(name = "write_fasta_bins")]
     pub fn write_fasta_bins<'py>(py: Python<'py>, contig_name: Vec<String>, bin_number: Vec<usize> ,src_contig_file: &str, outfolder: &str) -> usize {
@@ -1528,3 +2001,220 @@ impl FastaDataBase {
     }
     Ok(())
 }
+
+// use std::fs::File;
+// use std::io::{BufRead, BufReader};
+
+struct FastaIterator {
+    reader: BufReader<File>,
+    buffer: Vec<u8>,
+    sequence: Vec<u8>,
+    current_sequence: usize,
+    count: usize,
+    min_size: usize,
+}
+
+impl FastaIterator {
+    fn new(file_path: &str, min_size: usize) -> Self {
+        let file = File::open(file_path).expect("Failed to open FASTA file");
+        let count = BufReader::new(File::open(file_path).expect("Failed to open FASTA file"))
+            .split(b'>')
+            .filter(|result| tokenize_dna_fast(result.as_ref().unwrap(), min_size))
+            .count();
+        
+
+        FastaIterator {
+            reader: BufReader::new(file),
+            sequence: Vec::new(),
+            buffer: Vec::new(),
+            current_sequence: 0,
+            count: count,
+            min_size: min_size
+        }
+    }
+
+    fn skip_to(&mut self, n: usize) {
+        let num_skip = n-self.current_sequence;
+
+        let mut i = 0;
+
+        while i < num_skip {
+                let bytes_read = self.reader.read_until(b'>', &mut self.buffer).ok();
+    
+                if bytes_read == Some(0) {
+                    // dbg!("a");
+                    if !self.sequence.is_empty() {
+                        // dbg!("b");
+                        let res = tokenize_dna_fast(&self.sequence,self.min_size);
+                        if res == false {
+                            continue;
+                        }
+                        self.current_sequence += 1;
+                        i+= 1;
+                    }
+                    return;
+                } else if bytes_read == None {
+                    dbg!("possible error from rust in skip");
+                    return;
+                }
+    
+                if self.buffer.starts_with(b">") {
+
+                    self.buffer.clear();
+                } else {
+                    // dbg!("ee");
+                    if !self.sequence.is_empty() {
+                        let result = tokenize_dna_fast(&self.sequence[..],self.min_size);
+                        self.sequence.clear();
+                        self.sequence.extend_from_slice(&self.buffer);
+                        self.buffer.clear();
+                        if result == false {
+                            continue;
+                        }
+                        self.current_sequence += 1;
+                        i += 1;
+                    }
+                    self.sequence.extend_from_slice(&self.buffer);
+                    self.buffer.clear();
+                }
+        }
+        
+    }
+}
+
+impl Iterator for FastaIterator {
+    type Item = Vec<i32>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+
+        loop {
+            let bytes_read = self.reader.read_until(b'>', &mut self.buffer).ok()?;
+
+            if bytes_read == 0 {
+                // dbg!("a");
+                if !self.sequence.is_empty() {
+                    // dbg!("b");
+                    let res = tokenize_dna(&self.sequence,self.min_size);
+                    self.sequence.clear();
+                    if res == None {
+                        continue;
+                    }
+                    self.current_sequence += 1;
+                    return res
+                }
+                return None;
+            }
+
+            if self.buffer.starts_with(b">") {
+                // dbg!("c");
+
+                self.buffer.clear();
+            } else {
+                // dbg!("ee");
+                if !self.sequence.is_empty() {
+                    // dbg!("d");
+                    let cut = if self.sequence[self.sequence.len()-1] == b'>' {
+                        self.sequence.len() -1
+                    }  else {
+                        self.sequence.len()
+                    };
+                    let result = tokenize_dna(&self.sequence[..cut],self.min_size);
+                    self.sequence.clear();
+                    // self.buffer.clear();
+                    self.sequence.extend_from_slice(&self.buffer);
+                    self.buffer.clear();
+                    if result == None {
+                        continue;
+                    }
+                    self.current_sequence += 1;
+                    return result;
+                }
+                self.sequence.extend_from_slice(&self.buffer);
+                self.buffer.clear();
+            }
+        }
+    }
+}
+
+fn tokenize_dna_fast(fasta_entry: &[u8], min: usize) -> bool {
+
+    // Skip the first line (sequence name and other information)
+    let mut lines = fasta_entry.split(|&b| b == b'\n');
+    lines.next();
+
+    return lines.map(|x| x.iter().filter(|&y| *y != b'>').count()).sum::<usize>() >= min;
+}
+
+fn tokenize_dna(fasta_entry: &[u8], min: usize) -> Option<Vec<i32>> {
+    let mut sequence = Vec::new();
+
+    // Skip the first line (sequence name and other information)
+    let mut lines = fasta_entry.split(|&b| b == b'\n');
+    lines.next();
+
+    // Concatenate the remaining lines (DNA sequence)
+    for line in lines {
+        sequence.extend_from_slice(line);
+    }
+
+    if sequence.len() < min {
+        return None;
+    }
+
+    // dbg!(String::from_utf8(sequence.clone()));
+
+    // Convert the DNA sequence to labeled k-mers
+    let mut result = Vec::new();
+    for chunk in sequence.windows(5) {
+        result.push(kmer_to_16_bit_ray::<5>(chunk).unwrap_or_else(|| 1024) as i32);
+    }
+    let window_size = 5;
+    for (idx, i) in (window_size..=sequence.len()).rev().enumerate() {
+        let window = &sequence[i - window_size..i];
+        result.push(kmer_to_16_bit_ray_revcomp::<5>(window).unwrap_or_else( || 1024) as i32);
+      }
+
+    return Some(result);
+}
+
+use numpy::{ PyArray2};
+use pyo3::prelude::*;
+use numpy::npyffi::types::NPY_ORDER;
+#[pyclass]
+struct PyFastaIterator {
+    inner: FastaIterator,
+}
+
+#[pymethods]
+impl PyFastaIterator {
+    #[new]
+    fn new(file_path: &str, min_size: usize) -> Self {
+        PyFastaIterator {
+            inner: FastaIterator::new(file_path, min_size),
+        }
+    }
+
+    fn __iter__(slf: PyRef<Self>) -> PyRef<Self> {
+        slf
+    }
+
+    fn __next__(mut slf: PyRefMut<Self>) -> Option<Py<PyArray2<i32>>> {
+        slf.inner.next().map(|tokens| {
+            let gil = Python::acquire_gil();
+            let py = gil.python();
+            let len = tokens.len();
+            // dbg!(&tokens);
+            let arr = PyArray1::from_vec(py, tokens).reshape_with_order((2, len / 2), NPY_ORDER::NPY_CORDER).unwrap();
+            arr.to_owned()
+        })
+    }
+    fn skip_to(&mut self, n: usize) {
+        self.inner.skip_to(n);
+    }
+    fn size(&self) -> usize {
+        return self.inner.count;
+    }
+
+}
+
+
